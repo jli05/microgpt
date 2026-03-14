@@ -35,12 +35,13 @@ print(f"vocab size: {vocab_size}")
 n_layer = 1     # depth of the transformer neural network (number of layers)
 n_embd = 16     # width of the network (embedding dimension)
 n_state = 32
+n_att = 16
 block_size = 16 # maximum context length of the attention window (note: the longest name is 15 characters)
 
 matrix = lambda nout, nin, std=0.08: Value(array([[random.gauss(0, std) for _ in range(nin)] for _ in range(nout)]))
 state_dict = {'wte': matrix(vocab_size, n_embd),
               'wpe': matrix(block_size, n_embd),
-              'm': matrix(n_state, n_state),
+              'm': matrix(n_att, n_state),
               'token_proj': matrix(n_embd, n_state),
               'pos_proj': matrix(n_embd, n_state),
               'lm_head': matrix(n_state, vocab_size)}
@@ -56,7 +57,7 @@ for j in range(block_size):
     pos_id = Args(0, name=f'pos{j}')
     target_id = Args(0, name=f'target{j}')
 
-    h = (h @ state_dict['m']
+    h = (h + h.attend(h.topk(n_att)) @ state_dict['m']
          + state_dict['wte'].attend(token_id) @ state_dict['token_proj']
          + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj']).relu()
 
@@ -67,7 +68,7 @@ for j in range(block_size):
 
 
 def sgd_learning_rate():
-    r = .01
+    r = .005
     while True:
         yield r
         r *= .998
