@@ -11,7 +11,7 @@ import math     # math.log, math.exp
 import random   # random.seed, random.choices, random.gauss, random.shuffle
 random.seed(42) # Let there be order among chaos
 
-from numpy import array
+from numpy import array, zeros
 from micrograd import Value, Args, concatenate, vstack
 from micrograd.optim import SGD
 
@@ -34,86 +34,40 @@ print(f"vocab size: {vocab_size}")
 # Initialize the parameters, to store the knowledge of the model
 n_layer = 1     # depth of the transformer neural network (number of layers)
 n_embd = 16     # width of the network (embedding dimension)
+n_state = 32
 block_size = 16 # maximum context length of the attention window (note: the longest name is 15 characters)
-n_head = 4      # number of attention heads
-head_dim = n_embd // n_head # derived dimension of each head
+
 matrix = lambda nout, nin, std=0.08: Value(array([[random.gauss(0, std) for _ in range(nin)] for _ in range(nout)]))
-state_dict = {'wte': matrix(vocab_size, n_embd), 'wpe': matrix(block_size, n_embd), 'lm_head': matrix(n_embd, vocab_size)}
-for i in range(n_layer):
-    state_dict[f'layer{i}.attn_wq'] = matrix(n_embd, n_embd)
-    state_dict[f'layer{i}.attn_wk'] = matrix(n_embd, n_embd)
-    state_dict[f'layer{i}.attn_wv'] = matrix(n_embd, n_embd)
-    state_dict[f'layer{i}.attn_wo'] = matrix(n_embd, n_embd)
-    state_dict[f'layer{i}.mlp_fc1'] = matrix(n_embd, 4 * n_embd)
-    state_dict[f'layer{i}.mlp_fc2'] = matrix(4 * n_embd, n_embd)
+state_dict = {'wte': matrix(vocab_size, n_embd),
+              'wpe': matrix(block_size, n_embd),
+              'm': matrix(n_state, n_state),
+              'token_proj': matrix(n_embd, n_state),
+              'pos_proj': matrix(n_embd, n_state),
+              'lm_head': matrix(n_state, vocab_size)}
 params = list(state_dict.values())
 print(f"num params: {len(params)}")
 
-# Define the model architecture: a function mapping tokens and parameters to logits over what comes next
-# Follow GPT-2, blessed among the GPTs, with minor differences: layernorm -> rmsnorm, no biases, GeLU -> ReLU
-
-def rmsnorm(x):
-    ms = (x * x).mean()
-    scale = (ms + 1e-5) ** -0.5
-    return x * scale
-
-def gpt(token_id, pos_id, target_id, keys, values, logits_lst):
-    tok_emb = state_dict['wte'].attend(token_id) # token embedding
-    pos_emb = state_dict['wpe'].attend(pos_id) # position embedding
-    x = tok_emb + pos_emb
-    x = rmsnorm(x) # note: not redundant due to backward pass via the residual connection
-
-    for li in range(n_layer):
-        # 1) Multi-head Attention block
-        x_residual = x
-        x = rmsnorm(x)
-        q = x @ state_dict[f'layer{li}.attn_wq']
-        k = x @ state_dict[f'layer{li}.attn_wk']
-        v = x @ state_dict[f'layer{li}.attn_wv']
-        keys[li].append(k)
-        values[li].append(v)
-        x_attn = []
-        for h in range(n_head):
-            hs = h * head_dim
-            args = slice(hs, hs + head_dim)
-            attn_logits = (q.attend(args)
-                           @ vstack([ki.attend(args)
-                                     for ki in keys[li]]).T / head_dim ** .5)
-            attn_weights = attn_logits.softmax()
-            head_out = (attn_weights
-                        @ vstack([vi.attend(args)
-                                  for vi in values[li]]))
-            x_attn.append(head_out)
-
-        x = concatenate(x_attn, axis=0) @ state_dict[f'layer{li}.attn_wo']
-        x += x_residual
-        # 2) MLP block
-        x_residual = x
-        x = rmsnorm(x)
-        x = x @ state_dict[f'layer{li}.mlp_fc1']
-        x = x.relu()
-        x = x @ state_dict[f'layer{li}.mlp_fc2']
-        x += x_residual
-
-    logits = x @ state_dict['lm_head']
-    logits_lst.append(logits)
-    probs = logits.softmax()
-    loss = - probs.attend(target_id).log()
-    return loss
-
-losses = []
-keys, values = [[] for _ in range(n_layer)], [[] for _ in range(n_layer)]
+h = Value(zeros(n_state,))
 logits_lst = []
+losses = []
 avg_loss = []
 for j in range(block_size):
-    losses.append(gpt(Args(0, name=f'token{j}'),
-                      Args(0, name=f'pos{j}'),
-                      Args(0, name=f'target{j}'),
-                      keys, values, logits_lst))
+    token_id = Args(0, name=f'token{j}')
+    pos_id = Args(0, name=f'pos{j}')
+    target_id = Args(0, name=f'target{j}')
+
+    h = (h @ state_dict['m']
+         + state_dict['wte'].attend(token_id) @ state_dict['token_proj']
+         + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj']).relu()
+
+    logits = h @ state_dict['lm_head']
+    logits_lst.append(logits)
+    losses.append(- logits.softmax().attend(target_id).log())
     avg_loss.append(concatenate(losses, axis=0).mean())
 
+
 def sgd_learning_rate():
-    r = .002
+    r = .01
     while True:
         yield r
         r *= .998
