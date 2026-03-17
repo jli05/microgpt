@@ -41,7 +41,7 @@ block_size = 16 # maximum context length of the attention window (note: the long
 matrix = lambda nout, nin, std=0.08: Value(array([[random.gauss(0, std) for _ in range(nin)] for _ in range(nout)]))
 state_dict = {'wte': matrix(vocab_size, n_embd),
               'wpe': matrix(block_size, n_embd),
-              'm': matrix(n_att, n_state),
+              'm': matrix(n_state, n_state),
               'token_proj': matrix(n_embd, n_state),
               'pos_proj': matrix(n_embd, n_state),
               'lm_head': matrix(n_state, vocab_size)}
@@ -57,7 +57,8 @@ for j in range(block_size):
     pos_id = Args(0, name=f'pos{j}')
     target_id = Args(0, name=f'target{j}')
 
-    h = (h + h.attend(h.topk(n_att)) @ state_dict['m']
+    args = h.topk(n_att)
+    h = (h + h.attend(args) @ state_dict['m'].attend(args)
          + state_dict['wte'].attend(token_id) @ state_dict['token_proj']
          + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj']).relu()
 
