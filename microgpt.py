@@ -94,9 +94,10 @@ for step in range(num_steps):
         io_dict[f'pos{j}'] = j
 
     # Backward the loss, calculating the gradients with respect to all model parameters
-    avg_loss[n - 1].forward(**io_dict)
-    avg_loss[n - 1].backward()
-    sgd.step()
+    if n:
+        avg_loss[n - 1].forward(**io_dict)
+        avg_loss[n - 1].backward()
+        sgd.step()
 
     print(f"step {step+1:4d} / {num_steps:4d}"
           f" | loss {avg_loss[n - 1].data:.4f}", end='\r')
