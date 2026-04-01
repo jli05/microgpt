@@ -52,12 +52,14 @@ h = Value(zeros(n_state,))
 logits_lst = []
 losses = []
 avg_loss = []
+args_lst = []
 for j in range(block_size):
     token_id = Args(0, name=f'token{j}')
     pos_id = Args(0, name=f'pos{j}')
     target_id = Args(0, name=f'target{j}')
 
     args = h.topk(n_att)
+    args_lst.append(args)
     h = (h + h.attend(args) @ state_dict['m'].attend(args)
          + state_dict['wte'].attend(token_id) @ state_dict['token_proj']
          + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj']).relu()
@@ -105,6 +107,7 @@ for step in range(num_steps):
 # Inference: may the model babble back to us
 temperature = 0.5 # in (0, 1], control the "creativity" of generated text, low to high
 print("\n--- inference (new, hallucinated names) ---")
+from numpy import sort
 for sample_idx in range(20):
     token_id = BOS
     sample = []
@@ -119,3 +122,5 @@ for sample_idx in range(20):
             break
         sample.append(uchars[token_id])
     print(f"sample {sample_idx+1:2d}: {''.join(sample)}")
+    for j in range(pos_id):
+        print(f'args{j}', sort(args_lst[j].data))
