@@ -47,7 +47,7 @@ state_dict = {'wte': matrix(vocab_size, n_embd),
               'm4': matrix(n_state, n_state),
               'token_proj': matrix(n_embd, n_state),
               'pos_proj': matrix(n_embd, n_state),
-              'lm_head': matrix(n_state, vocab_size)}
+              'lm_head': matrix(vocab_size, n_state)}
 params = list(state_dict.values())
 print(f"num params: {len(params)}")
 
@@ -71,14 +71,15 @@ for j in range(block_size):
     b = (b + h.attend(args) @ state_dict['m3'].attend(args)
          + b.attend(args) @ state_dict['m4'].attend(args))
 
-    logits = (h - b) @ state_dict['lm_head']
+    delta = state_dict['lm_head'] - (h - b)
+    logits = - (delta ** 2).mean(axis=-1) ** .5
     logits_lst.append(logits)
     losses.append(- logits.softmax().attend(target_id).log())
     avg_loss.append(concatenate(losses, axis=0).mean())
 
 
 def sgd_learning_rate():
-    r = .001
+    r = .06
     while True:
         yield r
         r *= .998
