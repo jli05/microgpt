@@ -42,6 +42,9 @@ matrix = lambda nout, nin, std=0.08: Value(array([[random.gauss(0, std) for _ in
 state_dict = {'wte': matrix(vocab_size, n_embd),
               'wpe': matrix(block_size, n_embd),
               'm': matrix(n_state, n_state),
+              'm2': matrix(n_state, n_state),
+              'm3': matrix(n_state, n_state),
+              'm4': matrix(n_state, n_state),
               'token_proj': matrix(n_embd, n_state),
               'pos_proj': matrix(n_embd, n_state),
               'lm_head': matrix(n_state, vocab_size)}
@@ -49,6 +52,7 @@ params = list(state_dict.values())
 print(f"num params: {len(params)}")
 
 h = Value(zeros(n_state,))
+b = Value(zeros(n_state,))
 logits_lst = []
 losses = []
 avg_loss = []
@@ -58,20 +62,23 @@ for j in range(block_size):
     pos_id = Args(0, name=f'pos{j}')
     target_id = Args(0, name=f'target{j}')
 
-    args = h.topk(n_att)
+    args = (h - b).topk(n_att)
     args_lst.append(args)
     h = (h + h.attend(args) @ state_dict['m'].attend(args)
+         + b.attend(args) @ state_dict['m2'].attend(args)
          + state_dict['wte'].attend(token_id) @ state_dict['token_proj']
-         + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj']).relu()
+         + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj'])
+    b = (b + h.attend(args) @ state_dict['m3'].attend(args)
+         + b.attend(args) @ state_dict['m4'].attend(args))
 
-    logits = h @ state_dict['lm_head']
+    logits = (h - b) @ state_dict['lm_head']
     logits_lst.append(logits)
     losses.append(- logits.softmax().attend(target_id).log())
     avg_loss.append(concatenate(losses, axis=0).mean())
 
 
 def sgd_learning_rate():
-    r = .005
+    r = .001
     while True:
         yield r
         r *= .998
@@ -80,7 +87,7 @@ sgd = SGD(list(state_dict.values()), learning_rate=sgd_learning_rate(),
           momentum=.99)
 
 # Repeat in sequence
-num_steps = 1000 # number of training steps
+num_steps = 5000 # number of training steps
 for step in range(num_steps):
 
     # Take single document, tokenize it, surround it with BOS special token on both sides
