@@ -13,7 +13,7 @@ random.seed(42) # Let there be order among chaos
 
 from numpy import array, zeros
 from micrograd import Value, Args, concatenate, vstack
-from micrograd.optim import SGD
+from micrograd.optim import SGD, ADAM
 
 # Let there be a Dataset `docs`: list[str] of documents (e.g. a list of names)
 if not os.path.exists('input.txt'):
@@ -85,8 +85,11 @@ def sgd_learning_rate():
         yield r
         r *= .998
 
-sgd = SGD(list(state_dict.values()), learning_rate=sgd_learning_rate(),
-          momentum=.99)
+#optimizer = SGD(list(state_dict.values()), learning_rate=sgd_learning_rate(),
+#                 momentum=.99)
+
+optimizer = ADAM(list(state_dict.values()), learning_rate=.01,
+                 beta1=.85, beta2=.99, eps_adam=1e-8)
 
 # Repeat in sequence
 num_steps = 5000 # number of training steps
@@ -108,7 +111,7 @@ for step in range(num_steps):
     if n:
         avg_loss[n - 1].forward(**io_dict)
         avg_loss[n - 1].backward()
-        sgd.step()
+        optimizer.step(step, num_steps)
 
     print(f"step {step+1:4d} / {num_steps:4d}"
           f" | loss {avg_loss[n - 1].data:.4f}", end='\r')
