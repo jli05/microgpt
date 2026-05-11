@@ -12,6 +12,7 @@ import random   # random.seed, random.choices, random.gauss, random.shuffle
 random.seed(42) # Let there be order among chaos
 
 from numpy import array, zeros
+from numpy.random import normal
 from micrograd import Value, Args, concatenate, vstack
 from micrograd.optim import SGD, ADAM
 
@@ -37,47 +38,61 @@ n_embd = 16     # width of the network (embedding dimension)
 n_state = 32
 n_att = 16
 block_size = 16 # maximum context length of the attention window (note: the longest name is 15 characters)
+n_mode = 2
 
 matrix = lambda nout, nin, std=0.08: Value(array([[random.gauss(0, std) for _ in range(nin)] for _ in range(nout)]))
 state_dict = {'wte': matrix(vocab_size, n_embd),
               'wpe': matrix(block_size, n_embd),
-              'm': matrix(n_state, n_state),
-              'm2': matrix(n_state, n_state),
-              'm3': matrix(n_state, n_state),
-              'm4': matrix(n_state, n_state),
+              'm': Value(normal(0, 0.08, (n_mode, n_state, n_state))),
+              'm2': Value(normal(0, 0.08, (n_mode, n_state, n_state))),
+              'm3': Value(normal(0, 0.08, (n_mode, n_state, n_state))),
+              'm4': Value(normal(0, 0.08, (n_mode, n_state, n_state))),
               'token_proj': matrix(n_embd, n_state),
               'pos_proj': matrix(n_embd, n_state),
-              'lm_head': matrix(n_state, n_embd),
-              'outdict': matrix(vocab_size, n_embd)}
+              'mode': matrix(n_state, n_mode),
+              'lm_head': matrix(n_state, vocab_size)}
+              #'outdict': matrix(vocab_size, n_embd)}
 params = list(state_dict.values())
 print(f"num params: {len(params)}")
 
 h = Value(zeros(n_state,))
 b = Value(zeros(n_state,))
 logits_lst = []
-losses = []
+mode_lst = []
+loss = []
+pen_loss = []
 avg_loss = []
+avg_pen_loss = []
 args_lst = []
 for j in range(block_size):
     token_id = Args(0, name=f'token{j}')
     pos_id = Args(0, name=f'pos{j}')
     target_id = Args(0, name=f'target{j}')
 
+    mode_array = ((h - b) @ state_dict['mode']).softmax()
+    arg_mode = mode_array.argmax()
+
     args = (h - b).topk(n_att)
     args_lst.append(args)
-    h = (h + h.attend(args) @ state_dict['m'].attend(args)
-         + b.attend(args) @ state_dict['m2'].attend(args)
-         + state_dict['wte'].attend(token_id) @ state_dict['token_proj']
-         + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj'])
-    b = (b + h.attend(args) @ state_dict['m3'].attend(args)
-         + b.attend(args) @ state_dict['m4'].attend(args))
+    inc_b = (h.attend(args) @ state_dict['m3'].attend(arg_mode).attend(args)
+             + b.attend(args) @ state_dict['m4'].attend(arg_mode).attend(args))
+    inc_h = (h.attend(args) @ state_dict['m'].attend(arg_mode).attend(args)
+             + b.attend(args) @ state_dict['m2'].attend(arg_mode).attend(args)
+             + state_dict['wte'].attend(token_id) @ state_dict['token_proj']
+             + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj'])
+    b += inc_b
+    h += inc_h
 
-    delta = state_dict['outdict'] - (h - b).relu() @ state_dict['lm_head']
-    logits = - (delta ** 2).mean(axis=-1) ** .5
+    logits = (h - b) @ state_dict['lm_head']
     logits_lst.append(logits)
-    losses.append(- logits.softmax().attend(target_id).log())
-    avg_loss.append(concatenate(losses, axis=0).mean())
 
+    curr_loss = - logits.softmax().attend(target_id).log()
+    loss.append(curr_loss)
+    avg_loss.append(concatenate(loss, axis=0).mean())
+    pen_loss.append(curr_loss - mode_array.max().log())
+    avg_pen_loss.append(concatenate(pen_loss, axis=0).mean())
+
+    mode_lst.append(mode_array)
 
 def sgd_learning_rate():
     r = .06
@@ -110,11 +125,14 @@ for step in range(num_steps):
     # Backward the loss, calculating the gradients with respect to all model parameters
     if n:
         avg_loss[n - 1].forward(**io_dict)
-        avg_loss[n - 1].backward()
+        avg_pen_loss[n - 1].forward(**io_dict)
+        avg_pen_loss[n - 1].backward()
         optimizer.step(step, num_steps)
 
     print(f"step {step+1:4d} / {num_steps:4d}"
-          f" | loss {avg_loss[n - 1].data:.4f}", end='\r')
+          f" | loss {avg_loss[n - 1].data:.4f}"
+          f" | pen_loss {avg_pen_loss[n - 1].data:.4f}", end='\r')
+
 
 # Inference: may the model babble back to us
 temperature = 0.5 # in (0, 1], control the "creativity" of generated text, low to high
@@ -135,4 +153,5 @@ for sample_idx in range(20):
         sample.append(uchars[token_id])
     print(f"sample {sample_idx+1:2d}: {''.join(sample)}")
     for j in range(pos_id):
-        print(f'args{j}', sort(args_lst[j].data))
+        #print(f'args{j}', sort(args_lst[j].data))
+        print(mode_lst[j].data)
