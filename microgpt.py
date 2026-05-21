@@ -60,7 +60,7 @@ b = Value(zeros(n_state,))
 logits_lst = []
 mode_lst = []
 loss = []
-pen_loss = []
+penalty = []
 avg_loss = []
 avg_pen_loss = []
 args_lst = []
@@ -69,7 +69,7 @@ for j in range(block_size):
     pos_id = Args(0, name=f'pos{j}')
     target_id = Args(0, name=f'target{j}')
 
-    mode_array = ((h - b) @ state_dict['mode']).softmax()
+    mode_array = (h - b) @ state_dict['mode']
     arg_mode = mode_array.argmax()
 
     args = (h - b).topk(n_att)
@@ -88,9 +88,9 @@ for j in range(block_size):
 
     curr_loss = - logits.softmax().attend(target_id).log()
     loss.append(curr_loss)
+    penalty.append(- (mode_array.max() - mode_array.min()).log1p())
     avg_loss.append(concatenate(loss, axis=0).mean())
-    pen_loss.append(curr_loss - mode_array.max().log())
-    avg_pen_loss.append(concatenate(pen_loss, axis=0).mean())
+    avg_pen_loss.append(avg_loss[-1] + 1e-3 * concatenate(penalty, axis=0).mean())
 
     mode_lst.append(mode_array)
 
@@ -124,7 +124,6 @@ for step in range(num_steps):
 
     # Backward the loss, calculating the gradients with respect to all model parameters
     if n:
-        avg_loss[n - 1].forward(**io_dict)
         avg_pen_loss[n - 1].forward(**io_dict)
         avg_pen_loss[n - 1].backward()
         optimizer.step(step, num_steps)
