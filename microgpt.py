@@ -37,13 +37,13 @@ n_mode = 2
 matrix = lambda nout, nin, std=0.01: Value(array([[random.gauss(0, std) for _ in range(nin)] for _ in range(nout)]))
 state_dict = {'wte': matrix(vocab_size, n_embd),
               'wpe': matrix(block_size, n_embd),
-              'm': Value(normal(0, 0.01, (n_mode, n_state, n_state))),
-              'm2': Value(normal(0, 0.01, (n_mode, n_state, n_state))),
-              'm3': Value(normal(0, 0.01, (n_mode, n_state, n_state))),
-              'm4': Value(normal(0, 0.01, (n_mode, n_state, n_state))),
+              'm': Value(normal(0, 0.01, ( n_state, n_state))),
+              'm2': Value(normal(0, 0.01, ( n_state, n_state))),
+              'm3': Value(normal(0, 0.01, ( n_state, n_state))),
+              'm4': Value(normal(0, 0.01, ( n_state, n_state))),
               'token_proj': matrix(n_embd, n_state),
               'pos_proj': matrix(n_embd, n_state),
-              'mode': matrix(n_state, n_mode),
+              #'mode': matrix(n_state, n_mode),
               'lm_head': matrix(n_state, vocab_size)}
               #'outdict': matrix(vocab_size, n_embd)}
 params = list(state_dict.values())
@@ -63,30 +63,32 @@ for j in range(block_size):
     pos_id = Args(0, name=f'pos{j}')
     target_id = Args(0, name=f'target{j}')
 
-    mode_array = (h - b) @ state_dict['mode']
-    arg_mode = mode_array.argmax()
+    #mode_array = (h - b) @ state_dict['mode']
+    #arg_mode = mode_array.argmax()
 
     args = (h - b).topk(n_att)
     args_lst.append(args)
-    inc_b = (h.attend(args) @ state_dict['m3'].attend(arg_mode).attend(args)
-             + b.attend(args) @ state_dict['m4'].attend(arg_mode).attend(args))
-    inc_h = (h.attend(args) @ state_dict['m'].attend(arg_mode).attend(args)
-             + b.attend(args) @ state_dict['m2'].attend(arg_mode).attend(args)
+    inc_b = (h.attend(args) @ state_dict['m3'].attend(args)
+             + b.attend(args) @ state_dict['m4'].attend(args))
+    inc_h = (h.attend(args) @ state_dict['m'].attend(args)
+             + b.attend(args) @ state_dict['m2'].attend(args)
              + state_dict['wte'].attend(token_id) @ state_dict['token_proj']
              + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj'])
     b += inc_b
     h += inc_h
+    b = b.relu().log1p()
+    h = h.relu().log1p()
 
     logits = (h - b) @ state_dict['lm_head']
     logits_lst.append(logits)
 
     curr_loss = - logits.softmax().attend(target_id).log()
     loss.append(curr_loss)
-    penalty.append(- (mode_array.max() - mode_array.min()).log1p())
+    #penalty.append(- (mode_array.max() - mode_array.min()).log1p())
     avg_loss.append(concatenate(loss, axis=0).mean())
-    avg_pen_loss.append(avg_loss[-1] + 1e-3 * concatenate(penalty, axis=0).mean())
+    avg_pen_loss.append(avg_loss[-1]) # + 1e-3 * concatenate(penalty, axis=0).mean())
 
-    mode_lst.append(mode_array)
+    #mode_lst.append(mode_array)
 
 def sgd_learning_rate():
     r = .06
@@ -95,7 +97,7 @@ def sgd_learning_rate():
         r *= .998
 
 
-optimizer = ADAM(list(state_dict.values()), learning_rate=.00001,
+optimizer = ADAM(list(state_dict.values()), learning_rate=.001,
                  beta1=.85, beta2=.99, eps_adam=1e-8)
 
 # Repeat in sequence
