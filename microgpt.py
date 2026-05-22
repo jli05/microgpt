@@ -16,37 +16,31 @@ from numpy.random import normal
 from micrograd import Value, Args, concatenate, vstack
 from micrograd.optim import SGD, ADAM
 
-# Let there be a Dataset `docs`: list[str] of documents (e.g. a list of names)
-if not os.path.exists('input.txt'):
-    import urllib.request
-    names_url = 'https://raw.githubusercontent.com/karpathy/makemore/988aa59/names.txt'
-    urllib.request.urlretrieve(names_url, 'input.txt')
-docs = [line.strip() for line in open('input.txt') if line.strip()]
-random.shuffle(docs)
-print(f"num docs: {len(docs)}")
+from dataloader import loader
+from tokenizer import get_tokenizer
 
+tokenizer = get_tokenizer()
 # Let there be a Tokenizer to translate strings to sequences of integers ("tokens") and back
-uchars = sorted(set(''.join(docs))) # unique characters in the dataset become token ids 0..n-1
-BOS = len(uchars) # token id for a special Beginning of Sequence (BOS) token
-vocab_size = len(uchars) + 1 # total number of unique tokens, +1 is for BOS
+BOS = tokenizer.encode_special("<|bos|>")
+vocab_size = tokenizer.get_vocab_size()
 print(f"vocab size: {vocab_size}")
 
 
 # Initialize the parameters, to store the knowledge of the model
 n_layer = 1     # depth of the transformer neural network (number of layers)
-n_embd = 16     # width of the network (embedding dimension)
-n_state = 32
-n_att = 16
-block_size = 16 # maximum context length of the attention window (note: the longest name is 15 characters)
+n_embd = 64     # width of the network (embedding dimension)
+n_state = 256
+n_att = 32
+block_size = 512 # maximum context length of the attention window (note: the longest name is 15 characters)
 n_mode = 2
 
-matrix = lambda nout, nin, std=0.08: Value(array([[random.gauss(0, std) for _ in range(nin)] for _ in range(nout)]))
+matrix = lambda nout, nin, std=0.01: Value(array([[random.gauss(0, std) for _ in range(nin)] for _ in range(nout)]))
 state_dict = {'wte': matrix(vocab_size, n_embd),
               'wpe': matrix(block_size, n_embd),
-              'm': Value(normal(0, 0.08, (n_mode, n_state, n_state))),
-              'm2': Value(normal(0, 0.08, (n_mode, n_state, n_state))),
-              'm3': Value(normal(0, 0.08, (n_mode, n_state, n_state))),
-              'm4': Value(normal(0, 0.08, (n_mode, n_state, n_state))),
+              'm': Value(normal(0, 0.01, (n_mode, n_state, n_state))),
+              'm2': Value(normal(0, 0.01, (n_mode, n_state, n_state))),
+              'm3': Value(normal(0, 0.01, (n_mode, n_state, n_state))),
+              'm4': Value(normal(0, 0.01, (n_mode, n_state, n_state))),
               'token_proj': matrix(n_embd, n_state),
               'pos_proj': matrix(n_embd, n_state),
               'mode': matrix(n_state, n_mode),
@@ -100,19 +94,19 @@ def sgd_learning_rate():
         yield r
         r *= .998
 
-#optimizer = SGD(list(state_dict.values()), learning_rate=sgd_learning_rate(),
-#                 momentum=.99)
 
-optimizer = ADAM(list(state_dict.values()), learning_rate=.01,
+optimizer = ADAM(list(state_dict.values()), learning_rate=.00001,
                  beta1=.85, beta2=.99, eps_adam=1e-8)
 
 # Repeat in sequence
 num_steps = 5000 # number of training steps
+text_iterator = loader()
+
 for step in range(num_steps):
 
     # Take single document, tokenize it, surround it with BOS special token on both sides
-    doc = docs[step % len(docs)]
-    tokens = [BOS] + [uchars.index(ch) for ch in doc] + [BOS]
+    text = next(text_iterator)
+    tokens = tokenizer.encode(text, prepend='<|bos|>', append='<|bos|>')
     n = min(block_size, len(tokens) - 1)
 
     # Forward the token sequence through the model, building up the computation graph all the way to the loss
