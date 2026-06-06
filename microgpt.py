@@ -30,7 +30,7 @@ print(f"vocab size: {vocab_size}")
 n_layer = 1     # depth of the transformer neural network (number of layers)
 n_embd = 64     # width of the network (embedding dimension)
 n_state = 256
-n_att = 32
+n_att = 128
 block_size = 512 # maximum context length of the attention window (note: the longest name is 15 characters)
 
 matrix = lambda nout, nin, std=0.01: Value(array([[random.gauss(0, std) for _ in range(nin)] for _ in range(nout)]))
