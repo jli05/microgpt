@@ -13,7 +13,7 @@ random.seed(42) # Let there be order among chaos
 
 from numpy import array, zeros
 from numpy.random import normal
-from micrograd import Value, Args, concatenate, vstack
+from micrograd import Value, Args
 from micrograd.optim import SGD, ADAM
 
 from dataloader import loader
@@ -32,7 +32,6 @@ n_embd = 64     # width of the network (embedding dimension)
 n_state = 256
 n_att = 32
 block_size = 512 # maximum context length of the attention window (note: the longest name is 15 characters)
-n_mode = 2
 
 matrix = lambda nout, nin, std=0.01: Value(array([[random.gauss(0, std) for _ in range(nin)] for _ in range(nout)]))
 state_dict = {'wte': matrix(vocab_size, n_embd),
@@ -52,9 +51,7 @@ print(f"num params: {len(params)}")
 h = Value(zeros(n_state,))
 b = Value(zeros(n_state,))
 logits_lst = []
-mode_lst = []
-loss = []
-penalty = []
+loss_acc = Value(0)
 avg_loss = []
 avg_pen_loss = []
 args_lst = []
@@ -62,9 +59,6 @@ for j in range(block_size):
     token_id = Args(0, name=f'token{j}')
     pos_id = Args(0, name=f'pos{j}')
     target_id = Args(0, name=f'target{j}')
-
-    #mode_array = (h - b) @ state_dict['mode']
-    #arg_mode = mode_array.argmax()
 
     args = (h - b).topk(n_att)
     args_lst.append(args)
@@ -83,25 +77,26 @@ for j in range(block_size):
     logits_lst.append(logits)
 
     curr_loss = - logits.softmax().attend(target_id).log()
-    loss.append(curr_loss)
-    #penalty.append(- (mode_array.max() - mode_array.min()).log1p())
-    avg_loss.append(concatenate(loss, axis=0).mean())
-    avg_pen_loss.append(avg_loss[-1]) # + 1e-3 * concatenate(penalty, axis=0).mean())
+    avg_loss.append(loss_acc + (curr_loss - loss_acc) / (j + 1))
+    loss_acc = avg_loss[-1]
+    avg_pen_loss.append(avg_loss[-1])
 
-    #mode_lst.append(mode_array)
 
-def sgd_learning_rate():
-    r = .06
+num_steps = 5000 # number of training steps
+
+def learning_rate(lr0, num_steps):
+    d = lr0 / num_steps
+    lr = lr0
     while True:
-        yield r
-        r *= .998
+        yield lr
+        lr -= d
 
 
-optimizer = ADAM(list(state_dict.values()), learning_rate=.001,
+optimizer = ADAM(list(state_dict.values()),
+                 learning_rate=learning_rate(.01, num_steps),
                  beta1=.85, beta2=.99, eps_adam=1e-8)
 
 # Repeat in sequence
-num_steps = 5000 # number of training steps
 text_iterator = loader()
 
 for step in range(num_steps):
@@ -122,7 +117,7 @@ for step in range(num_steps):
     if n:
         avg_pen_loss[n - 1].forward(**io_dict)
         avg_pen_loss[n - 1].backward()
-        optimizer.step(step, num_steps)
+        optimizer.step()
 
     print(f"step {step+1:4d} / {num_steps:4d}"
           f" | loss {avg_loss[n - 1].data:.4f}"
