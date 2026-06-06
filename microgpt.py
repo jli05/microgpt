@@ -37,14 +37,9 @@ matrix = lambda nout, nin, std=0.01: Value(array([[random.gauss(0, std) for _ in
 state_dict = {'wte': matrix(vocab_size, n_embd),
               'wpe': matrix(block_size, n_embd),
               'm': Value(normal(0, 0.01, ( n_state, n_state))),
-              'm2': Value(normal(0, 0.01, ( n_state, n_state))),
-              'm3': Value(normal(0, 0.01, ( n_state, n_state))),
-              'm4': Value(normal(0, 0.01, ( n_state, n_state))),
               'token_proj': matrix(n_embd, n_state),
               'pos_proj': matrix(n_embd, n_state),
-              #'mode': matrix(n_state, n_mode),
               'lm_head': matrix(n_state, vocab_size)}
-              #'outdict': matrix(vocab_size, n_embd)}
 params = list(state_dict.values())
 print(f"num params: {len(params)}")
 
@@ -60,20 +55,15 @@ for j in range(block_size):
     pos_id = Args(0, name=f'pos{j}')
     target_id = Args(0, name=f'target{j}')
 
-    args = (h - b).topk(n_att)
+    args = h.topk(n_att)
     args_lst.append(args)
-    inc_b = (h.attend(args) @ state_dict['m3'].attend(args)
-             + b.attend(args) @ state_dict['m4'].attend(args))
     inc_h = (h.attend(args) @ state_dict['m'].attend(args)
-             + b.attend(args) @ state_dict['m2'].attend(args)
              + state_dict['wte'].attend(token_id) @ state_dict['token_proj']
              + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj'])
-    b += inc_b
     h += inc_h
-    b = b.relu().log1p()
     h = h.relu().log1p()
 
-    logits = (h - b) @ state_dict['lm_head']
+    logits = h @ state_dict['lm_head']
     logits_lst.append(logits)
 
     curr_loss = - logits.softmax().attend(target_id).log()
