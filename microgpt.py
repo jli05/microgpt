@@ -13,7 +13,7 @@ random.seed(42) # Let there be order among chaos
 
 from numpy import array, zeros
 from numpy.random import normal
-from micrograd import Value, Args
+from micrograd import Value, Args, topo_forward, topo_backward
 from micrograd.optim import SGD, ADAM
 
 from dataloader import loader
@@ -86,6 +86,44 @@ optimizer = ADAM(list(state_dict.values()),
                  learning_rate=learning_rate(.01, num_steps),
                  beta1=.85, beta2=.99, eps_adam=1e-8)
 
+
+# operator topology
+avg_pen_loss[-1].build_topology()
+topo = avg_pen_loss[-1].topo
+
+# marking of the losses in the topology
+id_loss_in_topo = []
+j = 0
+for p in range(block_size):
+    while topo[j] != avg_pen_loss[p]:
+        j += 1
+    assert topo[j] == avg_pen_loss[p]
+    id_loss_in_topo.append(j)
+    j += 1
+
+def generate(prompt='', temperature=.5, tokenizer=None,
+             block_size=None, topo=None, id_loss_in_topo=None,
+             BOS=None):
+    sample = tokenizer.encode(prompt, prepend='<|bos|>')
+    io_dict = {}
+    for pos_id, token_id in enumerate(sample):
+        io_dict[f'token{pos_id}'] = token_id
+        io_dict[f'pos{pos_id}'] = pos_id
+
+    start = 0
+    for j in range(pos_id + 1, block_size):
+        topo_forward(topo[start:(id_loss_in_topo[j - 1] + 1)], **io_dict)
+        probs = (logits_lst[j - 1] / temperature).softmax()
+        token_id = random.choices(range(vocab_size), weights=probs.data)[0]
+        if token_id == BOS:
+            break
+        sample.append(token_id)
+        io_dict[f'token{j}'] = token_id
+        io_dict[f'pos{j}'] = j
+        start = id_loss_in_topo[j - 1] + 1
+    print(tokenizer.decode(sample))
+
+
 # Repeat in sequence
 text_iterator = loader()
 
@@ -105,33 +143,15 @@ for step in range(num_steps):
 
     # Backward the loss, calculating the gradients with respect to all model parameters
     if n:
-        avg_pen_loss[n - 1].forward(**io_dict)
-        avg_pen_loss[n - 1].backward()
+        topo_forward(topo[:(id_loss_in_topo[n - 1] + 1)], **io_dict)
+        topo_backward(topo[:(id_loss_in_topo[n - 1] + 1)])
         optimizer.step()
 
     print(f"step {step+1:4d} / {num_steps:4d}"
           f" | loss {avg_loss[n - 1].data:.4f}"
           f" | pen_loss {avg_pen_loss[n - 1].data:.4f}", end='\r')
 
-
-# Inference: may the model babble back to us
-temperature = 0.5 # in (0, 1], control the "creativity" of generated text, low to high
-print("\n--- inference (new, hallucinated names) ---")
-from numpy import sort
-for sample_idx in range(20):
-    token_id = BOS
-    sample = []
-    io_dict = {}
-    for pos_id in range(block_size):
-        io_dict[f'token{pos_id}'] = token_id
-        io_dict[f'pos{pos_id}'] = pos_id
-        logits_lst[pos_id].forward(**io_dict)
-        probs = (logits_lst[pos_id] / temperature).softmax()
-        token_id = random.choices(range(vocab_size), weights=probs.data)[0]
-        if token_id == BOS:
-            break
-        sample.append(uchars[token_id])
-    print(f"sample {sample_idx+1:2d}: {''.join(sample)}")
-    for j in range(pos_id):
-        #print(f'args{j}', sort(args_lst[j].data))
-        print(mode_lst[j].data)
+    if (step + 1) % 20 == 0:
+        generate('The capital of France is', tokenizer=tokenizer,
+                 topo=topo, id_loss_in_topo=id_loss_in_topo,
+                 block_size=block_size, BOS=BOS)
