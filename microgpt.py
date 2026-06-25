@@ -61,7 +61,7 @@ for j in range(block_size):
              + state_dict['wte'].attend(token_id) @ state_dict['token_proj']
              + state_dict['wpe'].attend(pos_id) @ state_dict['pos_proj'])
     h += inc_h
-    h = h.relu().log1p()
+    h = h.arcsinh()
 
     logits = h @ state_dict['lm_head']
     logits_lst.append(logits)
